@@ -1,8 +1,8 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::collections::HashMap;
 
 use crate::TokenType;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OperatorType {
     Arithmetic,
     Relational,
