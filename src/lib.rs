@@ -13,25 +13,15 @@ pub enum TokenType {
     Keyword,
     Identifier,
     Constant(Constant),
-    SpecialChar,
+    SpecialChar(Option<usize>),
     Operator(OperatorType),
     Include,
 }
 
 #[derive(Debug)]
 pub struct Token {
-    token_type: TokenType,
-    raw: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Constant {
-    Integer,
-    Float,
-    Octal,
-    Hexadecimal,
-    Character,
-    String,
+    pub token_type: TokenType,
+    pub raw: String,
 }
 
 #[derive(Debug)]
@@ -91,38 +81,30 @@ impl Dekatron {
                 // Handle special chars
                 if traw.len() == 1 && SPECIALCHARS.contains(&(traw.as_bytes()[0] as char)) {
                     let token = Token {
-                        token_type: TokenType::SpecialChar,
+                        token_type: TokenType::SpecialChar(None),
                         raw: traw.to_string(),
                     };
                     token_line.push(token);
                     continue;
                 }
                 // Handle '.' special char if not float
-                if traw.contains(".") && !traw.contains("\"") {
-                    if traw.parse::<f64>().is_ok() {
-                        let token = Token {
-                            token_type: TokenType::Constant(Constant::Float),
-                            raw: traw.to_string(),
-                        };
-                        token_line.push(token);
-                    } else {
-                        let segs: Vec<&str> = traw.split(".").collect();
-                        let token = Token {
-                            token_type: TokenType::Identifier,
-                            raw: segs[0].to_string(),
-                        };
-                        token_line.push(token);
-                        let token = Token {
-                            token_type: TokenType::SpecialChar,
-                            raw: ".".to_string(),
-                        };
-                        token_line.push(token);
-                        let token = Token {
-                            token_type: TokenType::Identifier,
-                            raw: segs[1].to_string(),
-                        };
-                        token_line.push(token);
-                    }
+                if traw.contains(".") && !traw.contains("\"") && traw.parse::<f64>().is_err() {
+                    let segs: Vec<&str> = traw.split(".").collect();
+                    let token = Token {
+                        token_type: TokenType::Identifier,
+                        raw: segs[0].to_string(),
+                    };
+                    token_line.push(token);
+                    let token = Token {
+                        token_type: TokenType::SpecialChar(None),
+                        raw: ".".to_string(),
+                    };
+                    token_line.push(token);
+                    let token = Token {
+                        token_type: TokenType::Identifier,
+                        raw: segs[1].to_string(),
+                    };
+                    token_line.push(token);
                     continue;
                 }
                 if let Some(tnt) = token_map.get(traw) {
@@ -153,6 +135,7 @@ impl Dekatron {
             let el = now.elapsed();
             println!("{:?}", el);
         }
+        get_blocks(&mut tokens);
         return Self { tokens, token_map };
     }
 }
@@ -177,7 +160,9 @@ fn check_line(line: &Vec<Token>) {
     // If the last token isnt a SpecialChar (Like ";" or "{" for example), panic
     // Also panic if the last token is a closing delimiter
     let last_token = line.last().unwrap();
-    if last_token.token_type != TokenType::SpecialChar || is_closing_delimiter(&last_token.raw) {
+    if last_token.token_type != TokenType::SpecialChar(None)
+        || is_closing_delimiter(&last_token.raw)
+    {
         //println!("{:?}", line);
         if last_token.raw != ")" && line.len() > 1 {
             panic!()
@@ -221,7 +206,7 @@ fn check_line(line: &Vec<Token>) {
                         }
                         match right_val.token_type {
                             TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar => {
+                            TokenType::SpecialChar(None) => {
                                 if !is_opening_delimiter(&right_val.raw) {
                                     panic!();
                                 }
@@ -236,7 +221,7 @@ fn check_line(line: &Vec<Token>) {
                     | OperatorType::Special => {
                         match left_val.token_type {
                             TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar => {
+                            TokenType::SpecialChar(None) => {
                                 if !is_closing_delimiter(&left_val.raw) {
                                     panic!();
                                 }
@@ -245,7 +230,7 @@ fn check_line(line: &Vec<Token>) {
                         }
                         match right_val.token_type {
                             TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar => {
+                            TokenType::SpecialChar(None) => {
                                 if !is_opening_delimiter(&right_val.raw) {
                                     panic!();
                                 }
@@ -276,15 +261,18 @@ fn check_line(line: &Vec<Token>) {
                     }
                 }
             }
-            TokenType::SpecialChar => {
+            TokenType::SpecialChar(None) => {
                 if (i == 0 && token.raw != "{" && token.raw != "}")
                     || (i != 0
                         && i == line.len() - 1
                         && token.raw != ";".to_string()
                         && token.raw != ")".to_string()
-                        && line[i - 1].token_type == TokenType::SpecialChar)
+                        && token.raw != "{".to_string()
+                        && line[i - 1].token_type == TokenType::SpecialChar(None))
                     || (i != line.len() - 1 && token.raw == ";")
                 {
+                    //println!("{:#?}", token);
+                    //println!("{i} \n {:#?}", line);
                     panic!();
                 }
             }
@@ -304,7 +292,7 @@ fn is_opening_delimiter(token: &String) -> bool {
 fn delimiter_check(line: &Vec<Token>, index: usize) -> usize {
     let raw = &line[index].raw;
     let n = line.len();
-    // Could potentially make a static variable to avoid unnecessary allocations
+    // Could potentially make a static variable to avoid unnecessary allocations but cbf rn
     let ocd = [
         [&"(".to_string(), &")".to_string()],
         [&"{".to_string(), &"}".to_string()],
@@ -312,7 +300,7 @@ fn delimiter_check(line: &Vec<Token>, index: usize) -> usize {
     ];
     let mut i = index + 1;
     while i < n {
-        if line[i].token_type == TokenType::SpecialChar {
+        if line[i].token_type == TokenType::SpecialChar(None) {
             //println!("{:?}", &[raw, &line[i].raw]);
             if ocd.contains(&[raw, &line[i].raw]) {
                 //println!("CLosinh");
@@ -352,6 +340,28 @@ fn add_space_around_chars(input: String, chars: &[char]) -> String {
     result
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Constant {
+    Integer(SuffixType),
+    Float(SuffixType),
+    Octal(SuffixType),
+    Hexadecimal(SuffixType),
+    Character,
+    String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SuffixType {
+    LongInt,
+    LongLongInt,
+    UInt,
+    ULongInt,
+    ULongLongInt,
+    Float,
+    LongDouble,
+    Default,
+}
+
 fn get_constant(token: &str) -> Option<Constant> {
     if token.starts_with("\"") {
         return Some(Constant::String);
@@ -359,21 +369,91 @@ fn get_constant(token: &str) -> Option<Constant> {
     if token.starts_with("'") {
         return Some(Constant::Character);
     }
-    if token.parse::<isize>().is_ok() {
-        return Some(Constant::Integer);
+    // If token is a number, determine if it contains a prefix
+    let token_chars: Vec<char> = token.chars().collect();
+    if !token_chars[0].is_numeric() {
+        return None;
     }
-    if isize::from_str_radix(token, 8).is_ok() && !token.contains("x") {
-        return Some(Constant::Octal);
+    let mut suffix = SuffixType::Default;
+    let mut suffix_chars: Vec<char> = Vec::new();
+    let tn = token_chars.len();
+    for c in token_chars.into_iter().rev() {
+        if c.is_alphabetic() {
+            suffix_chars.push(c);
+        } else {
+            break;
+        }
     }
-    if isize::from_str_radix(token, 16).is_ok() && token.starts_with("0x") {
-        return Some(Constant::Hexadecimal);
+    let sn = suffix_chars.len();
+    if sn > 0 {
+        suffix_chars.sort();
+        let suffix_str: String = suffix_chars.iter().collect();
+        match &(*suffix_str.to_lowercase()) {
+            "u" => suffix = SuffixType::UInt,
+            "l" => suffix = SuffixType::LongInt,
+            "f" => suffix = SuffixType::Float,
+            "lu" => suffix = SuffixType::ULongInt,
+            "ll" => suffix = SuffixType::LongLongInt,
+            "llu" => suffix = SuffixType::ULongLongInt,
+            _ => panic!(),
+        }
+    }
+    let trimmed_token = &token[..tn - sn];
+    if trimmed_token.parse::<isize>().is_ok() {
+        return Some(Constant::Integer(suffix));
+    }
+    if isize::from_str_radix(trimmed_token, 8).is_ok() && !token.contains("x") {
+        return Some(Constant::Octal(suffix));
+    }
+    if isize::from_str_radix(trimmed_token, 16).is_ok() && token.starts_with("0x") {
+        return Some(Constant::Hexadecimal(suffix));
+    }
+    if trimmed_token.parse::<f32>().is_ok() {
+        if suffix == SuffixType::LongInt {
+            suffix = SuffixType::LongDouble;
+        }
+        return Some(Constant::Float(suffix));
     }
     None
 }
 
+fn get_blocks(lines: &mut Vec<Vec<Token>>) {
+    // Go through each line until an open brace with no id is found
+    // Then use a recursive function to find its matching closing brace and assign an id to it
+    // The recursive function will return an index of which token to skip to, or if no matching closing
+    // brace is found, it will panic.
+    let mut id: usize = 0;
+    let mut inner_id: usize = 0;
+    let mut block_nest_count = 0;
+    for l in lines {
+        for token in l {
+            if token.token_type == TokenType::SpecialChar(None) {
+                if token.raw == "{".to_string() {
+                    inner_id += 1;
+                    token.token_type = TokenType::SpecialChar(Some(id + inner_id));
+                    block_nest_count += 1;
+                } else if token.raw == "}".to_string() {
+                    if inner_id == 0 {
+                        panic!("Unexpected closing delimiter!");
+                    }
+                    token.token_type = TokenType::SpecialChar(Some(id + inner_id));
+                    inner_id -= 1;
+                    if inner_id == 0 {
+                        id += block_nest_count;
+                        block_nest_count = 0;
+                    }
+                }
+            }
+        }
+    }
+    if inner_id > 0 {
+        panic!("Unclosed delimiter!");
+    }
+}
+
 pub fn read_file(path: &str) -> Vec<String> {
     if !path.ends_with(".c") {
-//        panic!("Not a c file!");
+        panic!("Not a c file!");
     }
     let mut file = File::open(path).expect("Could not open file!!!");
     let buf = BufReader::new(&mut file);
@@ -386,8 +466,3 @@ pub fn read_file(path: &str) -> Vec<String> {
     }
     return lines;
 }
-
-
-
-
-
