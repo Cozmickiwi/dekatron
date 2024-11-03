@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
+    mem::discriminant,
     time::Instant,
 };
 
@@ -18,7 +19,7 @@ pub enum TokenType {
     Include,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenType,
     pub raw: String,
@@ -38,6 +39,7 @@ impl Dekatron {
         let token_map = fill_td();
         let mut tokens = Vec::new();
         for line in lines {
+            println!("{line}");
             let now = Instant::now();
             let line = add_space_around_chars(line, &SPECIALCHARS);
             // Handle #include statements
@@ -130,195 +132,100 @@ impl Dekatron {
             if assemble_str {
                 panic!();
             }
-            check_line(&token_line);
-            tokens.push(token_line);
+            //       check_line(&token_line);
+            // Split token_line into seperate line if needed
+            let mut lstart = 0;
+            if token_line
+                .iter()
+                .find(|&x| {
+                    discriminant(&x.token_type) == discriminant(&TokenType::SpecialChar(None))
+                        && ["{", "}", ";", ":"].contains(&x.raw.as_str())
+                })
+                .is_none()
+            {
+                tokens.push(token_line);
+            } else {
+                for (i, token) in token_line.iter().enumerate() {
+                    if let TokenType::SpecialChar(..) = token.token_type {
+                        match &token.raw[0..1] {
+                            // Braces should go on their own line to easily define blocks of code
+                            "{" | "}" => {
+                                if i != lstart {
+                                    tokens.push(token_line[lstart..i].to_vec());
+                                }
+                                tokens.push(vec![token.clone()]);
+                                lstart = i + 1;
+                            }
+                            ";" | ":" => {
+                                tokens.push(token_line[lstart..i + 1].to_vec());
+                                lstart = i + 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            //tokens.push(token_line);
             let el = now.elapsed();
             println!("{:?}", el);
         }
-        get_blocks(&mut tokens);
+        let now = Instant::now();
+        check_blocks(&mut tokens);
+        // Merge severed lines, for example:
+        // int a = (1
+        // + 2);
+        // Becomes:
+        // int a = (1 + 2);
+        merge_lines(&mut tokens);
+        //        check_blocks(&mut tokens);
+        let el = now.elapsed();
+        println!("Check and merge: {:?}", el);
         return Self { tokens, token_map };
     }
 }
 
-fn check_line(line: &Vec<Token>) {
-    // First check the ordering of tokens is syntactically correct
-
-    // Make sure delimiters open and close properly
-    let mut index = 0;
-    while index < line.len() {
-        if is_opening_delimiter(&line[index].raw) {
-            index = delimiter_check(&line, index);
-        } else if index + 1 == line.len()
-            && line.len() != 1
-            && is_closing_delimiter(&line[index].raw)
-            && line[index].raw != ")"
-        {
-            panic!("Unmatched closing delimiter!");
+fn merge_lines(tlines: &mut Vec<Vec<Token>>) {
+    let mut merge = false;
+    let mut merge_index = 0;
+    for i in 0..tlines.len() {
+        let line = &tlines[i];
+        if line.len() == 0 {
+            continue;
         }
-        index += 1;
-    }
-    // If the last token isnt a SpecialChar (Like ";" or "{" for example), panic
-    // Also panic if the last token is a closing delimiter
-    let last_token = line.last().unwrap();
-    if last_token.token_type != TokenType::SpecialChar(None)
-        || is_closing_delimiter(&last_token.raw)
-    {
-        //println!("{:?}", line);
-        if last_token.raw != ")" && line.len() > 1 {
-            panic!()
-        }
-    };
-    // If the first token is a keyword, make sure its not followed by a constant
-    // or an operator (with the exception of return constant)
-    match line[0].token_type {
-        TokenType::Keyword => match line[1].token_type {
-            TokenType::Operator(..) => panic!(),
-            TokenType::Constant(..) => {
-                if line[0].raw != "return" {
-                    panic!();
-                }
-            }
-            _ => {}
-        },
-        TokenType::Constant(..) | TokenType::Operator(..) => panic!(),
-        _ => {}
-    }
-    // Iterate over tokens and make sure ordering of TokenTypes is syntactically correct
-    // Exhaustive type checking to be handled by parser
-    // This also makes sure identifier names are syntactically correct
-    for (i, token) in line.iter().enumerate() {
-        match token.token_type {
-            TokenType::Keyword => {
-                if i != 0 {
-                    panic!();
-                }
-            }
-            TokenType::Operator(operator_type) => {
-                if i == 0 {
-                    panic!()
-                }
-                let left_val = &line[i - 1];
-                let right_val = &line[i + 1];
-                match operator_type {
-                    OperatorType::Assignment => {
-                        if left_val.token_type != TokenType::Identifier {
-                            panic!();
-                        }
-                        match right_val.token_type {
-                            TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar(None) => {
-                                if !is_opening_delimiter(&right_val.raw) {
-                                    panic!();
-                                }
-                            }
-                            _ => panic!(),
-                        }
-                    }
-                    OperatorType::Logical
-                    | OperatorType::Bitwise
-                    | OperatorType::Arithmetic
-                    | OperatorType::Relational
-                    | OperatorType::Special => {
-                        match left_val.token_type {
-                            TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar(None) => {
-                                if !is_closing_delimiter(&left_val.raw) {
-                                    panic!();
-                                }
-                            }
-                            _ => panic!(),
-                        }
-                        match right_val.token_type {
-                            TokenType::Identifier | TokenType::Constant(..) => {}
-                            TokenType::SpecialChar(None) => {
-                                if !is_opening_delimiter(&right_val.raw) {
-                                    panic!();
-                                }
-                            }
-                            _ => panic!(),
-                        }
-                    }
-                    OperatorType::IncDec => {
-                        if right_val.token_type != TokenType::Identifier {
-                            panic!();
-                        }
-                    }
-                }
-            }
-            TokenType::Constant(..) => {
-                if i == 0 {
-                    panic!()
-                }
-            }
-            TokenType::Identifier => {
-                let tchars: Vec<char> = token.raw.chars().collect();
-                if tchars[0].is_numeric() {
-                    panic!();
-                }
-                for c in tchars {
-                    if !(c.is_alphanumeric() || c == '_') {
-                        panic!();
-                    }
-                }
-            }
-            TokenType::SpecialChar(None) => {
-                if (i == 0 && token.raw != "{" && token.raw != "}")
-                    || (i != 0
-                        && i == line.len() - 1
-                        && token.raw != ";".to_string()
-                        && token.raw != ")".to_string()
-                        && token.raw != "{".to_string()
-                        && line[i - 1].token_type == TokenType::SpecialChar(None))
-                    || (i != line.len() - 1 && token.raw == ";")
-                {
-                    //println!("{:#?}", token);
-                    //println!("{i} \n {:#?}", line);
-                    panic!();
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn is_closing_delimiter(token: &String) -> bool {
-    return ["}".to_string(), "]".to_string(), ")".to_string()].contains(token);
-}
-
-fn is_opening_delimiter(token: &String) -> bool {
-    return ["{".to_string(), "[".to_string(), "(".to_string()].contains(token);
-}
-
-fn delimiter_check(line: &Vec<Token>, index: usize) -> usize {
-    let raw = &line[index].raw;
-    let n = line.len();
-    // Could potentially make a static variable to avoid unnecessary allocations but cbf rn
-    let ocd = [
-        [&"(".to_string(), &")".to_string()],
-        [&"{".to_string(), &"}".to_string()],
-        [&"[".to_string(), &"]".to_string()],
-    ];
-    let mut i = index + 1;
-    while i < n {
-        if line[i].token_type == TokenType::SpecialChar(None) {
-            //println!("{:?}", &[raw, &line[i].raw]);
-            if ocd.contains(&[raw, &line[i].raw]) {
-                //println!("CLosinh");
-                return i;
+        let comp_line = line.last().unwrap().raw == ";".to_string()
+            || line.last().unwrap().raw == ":".to_string()
+            || (["{", "}"].contains(&line[0].raw.as_str()) && line.len() == 1)
+            || line.last().unwrap().token_type == TokenType::Include;
+        if merge {
+            let line = tlines[i].clone();
+            if line.len() == 1 && (line[0].raw == "}".to_string() || line[0].raw == "{".to_string())
+            {
+                merge = false;
+                continue;
             } else {
-                if is_closing_delimiter(&line[i].raw) {
-                    panic!("Unmatched opening delimiter!");
-                } else if is_opening_delimiter(&line[i].raw) && i != n - 1 {
-                    i = delimiter_check(line, i);
-                }
-                if i == n - 1 && index != n - 1 {
-                    panic!("Unmatched opening delimiter!");
+                // assumes lines with inline special characters (e.g. a = 1; b = 2;)
+                // have been handled
+                tlines[merge_index].extend(line);
+                tlines[i] = Vec::new();
+                if comp_line {
+                    merge = false;
                 }
             }
         }
-        i += 1;
+        if !comp_line && !merge {
+            merge = true;
+            merge_index = i;
+        }
     }
-    return n;
+    let mut rem_lines = Vec::new();
+    for i in 0..tlines.len() {
+        if tlines[i].is_empty() {
+            rem_lines.push(i);
+        }
+    }
+    for (i, r) in rem_lines.iter().enumerate() {
+        tlines.remove(r - i);
+    }
 }
 
 fn add_space_around_chars(input: String, chars: &[char]) -> String {
@@ -417,36 +324,42 @@ fn get_constant(token: &str) -> Option<Constant> {
     None
 }
 
-fn get_blocks(lines: &mut Vec<Vec<Token>>) {
+fn check_blocks(lines: &mut Vec<Vec<Token>>) {
     // Go through each line until an open brace with no id is found
-    // Then use a recursive function to find its matching closing brace and assign an id to it
-    // The recursive function will return an index of which token to skip to, or if no matching closing
-    // brace is found, it will panic.
-    let mut id: usize = 0;
-    let mut inner_id: usize = 0;
-    let mut block_nest_count = 0;
+    // Then its matching closing brace is found assign an id to it
+    // Do the same for parens and brackets
+    let mut id: [usize; 3] = [0; 3];
+    let mut inner_id: [usize; 3] = [0; 3];
+    let mut block_nest_count: [usize; 3] = [0; 3];
+    let openi = ["{", "(", "["];
+    let closei = ["}", ")", "]"];
     for l in lines {
         for token in l {
             if token.token_type == TokenType::SpecialChar(None) {
-                if token.raw == "{".to_string() {
-                    inner_id += 1;
-                    token.token_type = TokenType::SpecialChar(Some(id + inner_id));
-                    block_nest_count += 1;
-                } else if token.raw == "}".to_string() {
-                    if inner_id == 0 {
+                let symbol = &token.raw[0..1];
+                if let Some(i) = openi.iter().position(|&x| x == symbol) {
+                    inner_id[i] += 1;
+                    if symbol == "{" || symbol == "}" {
+                        token.token_type = TokenType::SpecialChar(Some(id[i] + inner_id[i]));
+                    }
+                    block_nest_count[i] += 1;
+                } else if let Some(i) = closei.iter().position(|&x| x == symbol) {
+                    if inner_id[i] == 0 {
                         panic!("Unexpected closing delimiter!");
                     }
-                    token.token_type = TokenType::SpecialChar(Some(id + inner_id));
-                    inner_id -= 1;
-                    if inner_id == 0 {
-                        id += block_nest_count;
-                        block_nest_count = 0;
+                    if symbol == "{" || symbol == "}" {
+                        token.token_type = TokenType::SpecialChar(Some(id[i] + inner_id[i]));
+                    }
+                    inner_id[i] -= 1;
+                    if inner_id[i] == 0 {
+                        id[i] += block_nest_count[i];
+                        block_nest_count[i] = 0;
                     }
                 }
             }
         }
     }
-    if inner_id > 0 {
+    if inner_id.iter().sum::<usize>() > 0 {
         panic!("Unclosed delimiter!");
     }
 }
