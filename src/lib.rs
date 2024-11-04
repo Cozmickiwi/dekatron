@@ -38,7 +38,12 @@ impl Dekatron {
     pub fn tokenize(lines: Vec<String>) -> Self {
         let token_map = fill_td();
         let mut tokens = Vec::new();
+        let mut line_number = 0;
         for line in lines {
+            line_number += 1;
+            if line.is_empty() {
+                continue;
+            }
             println!("{line}");
             let now = Instant::now();
             let line = add_space_around_chars(line, &SPECIALCHARS);
@@ -79,7 +84,6 @@ impl Dekatron {
                     }
                     continue;
                 }
-
                 // Handle special chars
                 if traw.len() == 1 && SPECIALCHARS.contains(&(traw.as_bytes()[0] as char)) {
                     let token = Token {
@@ -130,6 +134,7 @@ impl Dekatron {
                 }
             }
             if assemble_str {
+                println!("Line {line_number}: Invalid string");
                 panic!();
             }
             //       check_line(&token_line);
@@ -231,7 +236,6 @@ fn merge_lines(tlines: &mut Vec<Vec<Token>>) {
 fn add_space_around_chars(input: String, chars: &[char]) -> String {
     let mut result = String::new();
     let mut prev_char = ' ';
-
     for current_char in input.chars() {
         // Check if the current character is one of the specified characters
         if chars.contains(&current_char) && prev_char != ' ' {
@@ -243,7 +247,6 @@ fn add_space_around_chars(input: String, chars: &[char]) -> String {
         }
         prev_char = current_char; // Update previous character
     }
-
     result
 }
 
@@ -373,9 +376,9 @@ pub fn read_file(path: &str) -> Vec<String> {
     let mut lines = Vec::new();
     for l in buf.lines() {
         let line = l.unwrap();
-        if !line.is_empty() {
+        //if !line.is_empty() {
             lines.push(line);
-        }
+        //}
     }
     return lines;
 }
