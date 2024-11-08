@@ -140,6 +140,7 @@ impl Dekatron {
             //       check_line(&token_line);
             // Split token_line into seperate line if needed
             let mut lstart = 0;
+            //println!("{:?}", token_line);
             if token_line
                 .iter()
                 .find(|&x| {
@@ -167,6 +168,8 @@ impl Dekatron {
                             }
                             _ => {}
                         }
+                    } else if i == token_line.len() - 1 {
+                        tokens.push(token_line[lstart..i + 1].to_vec());
                     }
                 }
             }

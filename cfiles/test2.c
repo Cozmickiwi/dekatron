@@ -2,7 +2,7 @@
 
 int loopy()
 {
-	int count = 0;
+	int count, b = 0;
 	while (count < 10) {
 		count =
 			count
@@ -14,7 +14,6 @@ int loopy()
 int main()
 {
 	printf("Hello, world!");if (1ul + 2ul == 3ul){printf("3");}
-	
 
 	int loopres
 		= loopy()
